@@ -53,7 +53,7 @@ Used during incident response, insider threat investigations, and workstation re
 .\ZavetSec-BrowserHistory.ps1 -OutputPath "C:\IR\host42_history.html" -OpenReport
 ```
 
-> Without arguments the report is saved to `.\Reports\ZavetSec-BrowserHistory_<HOSTNAME>_<TIMESTAMP>.html`
+> Without arguments the report is saved to `.\Reports\<HOSTNAME>_<TIMESTAMP>.html`
 
 ---
 
@@ -156,8 +156,8 @@ sqlite3.exe found
 
 ```
 .\Reports\
-└── ZavetSec-BrowserHistory_HOSTNAME_20250614_093100.html   ← open this
-    ZavetSec-BrowserHistory_HOSTNAME_20250614_093100.csv    ← with -CsvExport
+└── HOSTNAME_20250614_093100.html   ← open this
+    HOSTNAME_20250614_093100.csv    ← with -CsvExport
 ```
 
 **CSV columns:** `UserName, Browser, Domain, Title, URL, Visits, LastVisit`
