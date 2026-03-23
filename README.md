@@ -51,6 +51,9 @@ Used during incident response, insider threat investigations, and workstation re
 
 # Specify an explicit output path
 .\ZavetSec-BrowserHistory.ps1 -OutputPath "C:\IR\host42_history.html" -OpenReport
+
+# Skip archiving — save report as plain HTML (useful if 7-Zip is unavailable)
+.\ZavetSec-BrowserHistory.ps1 -NoArchive -OpenReport
 ```
 
 > Without arguments the report is saved to `.\Reports\<HOSTNAME>_<TIMESTAMP>.html`
@@ -67,6 +70,7 @@ Used during incident response, insider threat investigations, and workstation re
 | `-CsvExport` | Switch | — | Save results as CSV alongside the HTML |
 | `-DateFrom` | String | — | Collect records starting from this date (`yyyy-MM-dd`) |
 | `-DateTo` | String | — | Collect records up to and including this date (`yyyy-MM-dd`) |
+| `-NoArchive` | Switch | — | Skip ZIP archiving — save HTML (and CSV) as plain files |
 
 ---
 
@@ -106,12 +110,18 @@ The report is a single self-contained `.html` file — no internet connection or
 |---|---|
 | **PowerShell** | 5.1+ (built into Windows 8.1 / Server 2012 R2 and later) |
 | **Privileges** | Local Administrator — required for VSS and reading other users' profiles |
+| **7z.exe** | Optional but recommended. Required for AES-256 encrypted ZIP output |
 | **sqlite3.exe** | Optional. Without it — regex fallback (URLs only, no titles or visit counts) |
 
 ### Installing sqlite3.exe (recommended)
 
 1. Download `sqlite-tools-win-x64-*.zip` from [sqlite.org/download.html](https://sqlite.org/download.html)
 2. Place `sqlite3.exe` next to the script or in a `sqlite3\` subfolder
+
+### Installing 7z.exe (recommended)
+
+1. Download and install [7-Zip](https://www.7-zip.org/) — or copy `7z.exe` from an existing installation
+2. Place `7z.exe` next to the script, or ensure it is available system-wide in `PATH`
 
 ```
 ZavetSec-BrowserHistory.ps1
@@ -154,13 +164,51 @@ sqlite3.exe found
 
 ## 📁 Output Structure
 
+**Default (with archiving):**
 ```
 .\Reports\
-└── HOSTNAME_20250614_093100.html   ← open this
-    HOSTNAME_20250614_093100.csv    ← with -CsvExport
+└── HOSTNAME_20250614_093100.zip   ← AES-256 encrypted archive
+```
+The unencrypted `.html` (and `.csv` if `-CsvExport`) are deleted after archiving.
+
+**With `-NoArchive`:**
+```
+.\Reports\
+├── HOSTNAME_20250614_093100.html
+└── HOSTNAME_20250614_093100.csv   ← with -CsvExport
 ```
 
 **CSV columns:** `UserName, Browser, Domain, Title, URL, Visits, LastVisit`
+
+---
+
+## 🔑 Archive Password
+
+A 16-character random password is generated on each run and printed to the console on completion:
+
+```
+  ================================================================
+   REPORT READY
+  ================================================================
+
+   Archive  : .\Reports\HOSTNAME_20250614_093100.zip
+
+   Password : aB3$mK9#Xv2!pQnZ
+
+   Save this password — it will not be shown again.
+  ================================================================
+```
+
+The password is not stored anywhere. Copy it before closing the terminal.
+
+**Encryption requires `7z.exe`** (7-Zip). If not found, the script falls back to a standard unencrypted ZIP with a warning. Place `7z.exe` next to the script or install [7-Zip](https://www.7-zip.org/) system-wide.
+
+```
+ZavetSec-BrowserHistory.ps1
+7z.exe                   ← optional but recommended
+sqlite3.exe              ← or sqlite3\sqlite3.exe
+Reports\
+```
 
 ---
 
@@ -189,6 +237,8 @@ No — the script looks for profiles at standard `AppData` paths. Portable insta
 - `-DateFrom` / `-DateTo` — date range filtering at collection level
 - `-CsvExport` — parallel CSV output alongside the HTML report
 - `[CmdletBinding()]` + `Write-Progress` — `-Verbose` support and console progress bar
+- AES-256 encrypted ZIP output via `7z.exe` — 16-char random password printed to console
+- `-NoArchive` — skip archiving, save report as plain HTML for environments without 7-Zip
 - HTML: interactive report with search, user / browser / date filters, column sorting
 - HTML: in-browser CSV export of visible rows (BOM UTF-8, Excel-compatible)
 - HTML: visit count mini-bar, URL and domain tooltips, browser favicon
