@@ -25,7 +25,7 @@ The differences that matter in the field:
 
 - **VSS Shadow Copy** — reads database files from running browsers without killing the process or waiting for it to close. Most tools require the browser to be closed first.
 - **All users in one run** — enumerates every local profile via the registry, not just the current session. One command covers the whole machine.
-- **Encrypted evidence packaging** — output goes into an AES-256 ZIP with a one-time random password printed to console. Safe to copy over a jump host, email to a colleague, or drop on a USB.
+- **Encrypted evidence packaging** — output goes into an AES-256 ZIP with a one-time random password printed to console. Safe to copy over a jump host, email to a colleague, or drop on a USB. Requires `7z.exe` + `7z.dll` from a 7-Zip installation.
 - **Zero installation** — single `.ps1` file. Works on any Windows machine with PowerShell 5.1, which means every corporate endpoint since Windows 7.
 - **Regex fallback** — if `sqlite3.exe` is not available, the script still extracts URLs from raw database bytes. Degraded output, but output.
 
@@ -149,18 +149,19 @@ The script runs with no external files. Optional tools improve output quality:
 | File | Effect |
 |---|---|
 | `sqlite3.exe` | Full SQL parse: titles + visit counts + timestamps. Without it: URL-only regex fallback |
-| `7z.exe` | AES-256 encrypted ZIP output. Without it: unencrypted ZIP fallback |
+| `7z.exe` + `7z.dll` | AES-256 encrypted ZIP output. Without them: unencrypted ZIP fallback |
 
 Both files are included in the [release archive](https://github.com/zavetsec/ZavetSec-BrowserHistory/releases/latest). Download the release ZIP, extract everything to a folder — the script will find them automatically.
 
 Alternatively, download from official sources:
 - `sqlite3.exe` — [sqlite.org/download.html](https://sqlite.org/download.html) (`sqlite-tools-win-x64-*.zip`)
-- `7z.exe` — [7-zip.org](https://www.7-zip.org/) (copy from any existing 7-Zip installation)
+- `7z.exe` + `7z.dll` — [7-zip.org](https://www.7-zip.org/) (copy both files from any existing 7-Zip installation, usually `C:\Program Files\7-Zip\`)
 
 ```
 ZavetSec-BrowserHistory.ps1
 sqlite3.exe        ← included in release archive
 7z.exe             ← included in release archive
+7z.dll             ← included in release archive (required by 7z.exe)
 Reports\           ← created automatically
 ```
 
