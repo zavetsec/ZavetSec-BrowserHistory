@@ -4,7 +4,8 @@
 #  via VSS shadow copy (bypasses file locks)
 #
 #  Requires: Run as Administrator
-#            sqlite3.exe in same folder (optional, enables full parse)
+#            7z.exe + 7z.dll in same folder (optional, enables AES-256 ZIP)
+#            sqlite3.exe in same folder (optional, enables full browser parse)
 #
 #  Parameters:
 #    -OutputPath            Path for the HTML report (auto-generated if omitted)
@@ -13,11 +14,13 @@
 #    -CsvExport             Also save results as CSV alongside the HTML
 #    -DateFrom              Filter records from this date (yyyy-MM-dd)
 #    -DateTo                Filter records up to this date  (yyyy-MM-dd)
+#    -NoArchive             Skip ZIP archiving - save HTML (and CSV) as plain files
 #
 #  Examples:
 #    .\ZavetSec-BrowserHistory.ps1
 #    .\ZavetSec-BrowserHistory.ps1 -OpenReport -CsvExport
 #    .\ZavetSec-BrowserHistory.ps1 -DateFrom 2025-01-01 -DateTo 2025-06-30 -CsvExport
+#    .\ZavetSec-BrowserHistory.ps1 -NoArchive -OpenReport
 #
 #  https://github.com/zavetsec
 # ============================================================
@@ -33,7 +36,9 @@ param(
     [switch]$CsvExport,
     # Optional: filter records by date range (ISO format: 2025-01-01)
     [string]$DateFrom            = "",
-    [string]$DateTo              = ""
+    [string]$DateTo              = "",
+    # Optional: skip ZIP archiving, save HTML (and CSV) as plain files
+    [switch]$NoArchive
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -69,11 +74,13 @@ if ([string]::IsNullOrEmpty($OutputPath)) {
 $Sqlite3 = $null
 $candidates = @(
     (Join-Path $ScriptDir "sqlite3.exe"),
-    (Join-Path $ScriptDir "sqlite3\sqlite3.exe"),
-    (Get-Command "sqlite3.exe" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    (Join-Path $ScriptDir "sqlite3\sqlite3.exe")
 )
+$env:PATH -split ';' | Where-Object { $_ } | ForEach-Object {
+    $candidates += (Join-Path $_ "sqlite3.exe")
+}
 foreach ($c in $candidates) {
-    if ($c -and (Test-Path $c)) { $Sqlite3 = $c; break }
+    if ($c -and (Test-Path $c)) { $Sqlite3 = (Resolve-Path $c).Path; break }
 }
 
 Write-Host ""
@@ -850,19 +857,182 @@ function exportCsv(){
 
 $html | Set-Content -Path $OutputPath -Encoding UTF8
 
-Write-Host "  [+] Report saved: $OutputPath" -ForegroundColor Green
-
 # Optional CSV export
 if ($CsvExport -and $allRecords.Count -gt 0) {
     $csvPath = [System.IO.Path]::ChangeExtension($OutputPath, ".csv")
     $allRecords | Select-Object UserName, Browser, Domain, Title, URL, Visits,
         @{ Name="LastVisit"; Expression={ if ($_.LastVisit -ne [datetime]::MinValue) { $_.LastVisit.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") } else { "" } } } |
         Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
-    Write-Host "  [+] CSV saved:    $csvPath" -ForegroundColor Green
+}
+
+# ============================================================
+#  ZIP WITH PASSWORD  (skipped when -NoArchive is set)
+# ============================================================
+
+$zipOk       = $false
+$zipPath     = $null
+$zipPassword = $null
+$sevenZip    = $null
+
+if ($NoArchive) {
+
+    Write-Host "  [*] -NoArchive set - skipping ZIP, files saved as-is" -ForegroundColor Yellow
+
+} else {
+
+    # Generate a 16-character random password: mixed case + digits, no special chars
+    # (special chars like # ^ % ! break 7z command line argument parsing)
+    $pwChars  = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'.ToCharArray()
+    $rng      = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $pwBytes  = New-Object byte[] 16
+    $rng.GetBytes($pwBytes)
+    $zipPassword = -join ($pwBytes | ForEach-Object { $pwChars[$_ % $pwChars.Length] })
+    $rng.Dispose()
+
+    $zipPath = [System.IO.Path]::ChangeExtension($OutputPath, ".zip")
+
+    # Collect files to pack
+    $filesToPack = @($OutputPath)
+    if ($CsvExport -and (Test-Path ([System.IO.Path]::ChangeExtension($OutputPath, ".csv")))) {
+        $filesToPack += [System.IO.Path]::ChangeExtension($OutputPath, ".csv")
+    }
+
+    # Locate 7-Zip — always resolve to full absolute path to avoid PS execution warnings
+    $sevenZipCandidates = @(
+        (Join-Path $ScriptDir "7z.exe"),
+        (Join-Path $ScriptDir "7-zip\7z.exe"),
+        "C:\Program Files\7-Zip\7z.exe",
+        "C:\Program Files (x86)\7-Zip\7z.exe"
+    )
+    # Check PATH entries manually without invoking Get-Command (avoids PS warning on local exe)
+    $env:PATH -split ';' | Where-Object { $_ } | ForEach-Object {
+        $sevenZipCandidates += (Join-Path $_ "7z.exe")
+    }
+    foreach ($c in $sevenZipCandidates) {
+        if ($c -and (Test-Path $c)) { $sevenZip = (Resolve-Path $c).Path; break }
+    }
+
+    if ($sevenZip) {
+        # AES-256 encrypted ZIP via direct ProcessStartInfo — bypasses all PS/cmd escaping
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName               = $sevenZip
+            $psi.UseShellExecute        = $false
+            $psi.CreateNoWindow         = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError  = $true
+
+            $argParts = @("a", "-tzip", "-mem=AES256", "-p$zipPassword", "`"$zipPath`"")
+            foreach ($f in $filesToPack) { $argParts += "`"$f`"" }
+            $psi.Arguments = $argParts -join ' '
+
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdout = $proc.StandardOutput.ReadToEnd()
+            $stderr = $proc.StandardError.ReadToEnd()
+            $proc.WaitForExit()
+
+            if ($proc.ExitCode -eq 0 -and (Test-Path $zipPath)) {
+                $zipOk = $true
+                Write-Host "  [+] Encrypted ZIP : $zipPath" -ForegroundColor Green
+                Write-Host "      Method         : AES-256 via 7-Zip" -ForegroundColor DarkGray
+            } else {
+                Write-Host "  [!] 7-Zip failed (exit $($proc.ExitCode))" -ForegroundColor Yellow
+                if ($stderr) { Write-Host "      $($stderr.Trim())" -ForegroundColor DarkGray }
+            }
+        } catch {
+            Write-Host "  [!] 7-Zip error: $_" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $zipOk) {
+        # Fallback: standard ZIP without encryption + warning
+        try {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+            $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
+            foreach ($f in $filesToPack) {
+                $entryName = Split-Path $f -Leaf
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f, $entryName, 'Optimal') | Out-Null
+            }
+            $zip.Dispose()
+            $zipOk = $true
+            Write-Host "  [+] ZIP saved      : $zipPath" -ForegroundColor Green
+            Write-Host "  [!] WARNING        : 7-Zip failed - ZIP created WITHOUT encryption" -ForegroundColor Yellow
+            Write-Host "      Required files   : 7z.exe + 7z.dll (both from 7-Zip installation)" -ForegroundColor DarkGray
+            Write-Host "      Copy both to     : $ScriptDir" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  [!] ZIP creation failed: $_" -ForegroundColor Red
+        }
+    }
+
+    # Remove unencrypted source files after successful archiving
+    if ($zipOk) {
+        foreach ($f in $filesToPack) {
+            Remove-Item $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ============================================================
+#  FINAL SUMMARY
+# ============================================================
+Write-Host ""
+Write-Host "  ================================================================" -ForegroundColor DarkGray
+Write-Host "   REPORT READY" -ForegroundColor Cyan
+Write-Host "  ================================================================" -ForegroundColor DarkGray
+Write-Host ""
+
+if ($NoArchive) {
+    Write-Host "   Report   : $OutputPath" -ForegroundColor White
+    if ($CsvExport) {
+        $csvPath = [System.IO.Path]::ChangeExtension($OutputPath, ".csv")
+        if (Test-Path $csvPath) {
+            Write-Host "   CSV      : $csvPath" -ForegroundColor White
+        }
+    }
+    Write-Host ""
+    Write-Host "   Mode     : plain files (no archive, no password)" -ForegroundColor Yellow
+} elseif ($zipOk) {
+    Write-Host "   Archive  : $zipPath" -ForegroundColor White
+    Write-Host ""
+    if ($sevenZip) {
+        Write-Host "   Password : " -ForegroundColor DarkGray -NoNewline
+        Write-Host $zipPassword -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "   Save this password - it will not be shown again." -ForegroundColor DarkGray
+    } else {
+        Write-Host "   Password : [not set - 7-Zip unavailable]" -ForegroundColor Yellow
+        Write-Host "   Protect the ZIP manually if transferring over untrusted channels." -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host "   Report   : $OutputPath" -ForegroundColor White
+    Write-Host ""
+    Write-Host "   [!] ZIP archiving failed - report left as plain file." -ForegroundColor Yellow
 }
 
 Write-Host ""
+Write-Host "  ================================================================" -ForegroundColor DarkGray
+Write-Host ""
 
 if ($OpenReport) {
-    Start-Process $OutputPath
+    if ($NoArchive -or (-not $zipOk)) {
+        Start-Process $OutputPath
+    } elseif ($zipOk -and $sevenZip) {
+        $tmpDir  = Join-Path $env:TEMP ("BHE_View_" + [System.IO.Path]::GetRandomFileName())
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        $htmlLeaf = Split-Path $OutputPath -Leaf
+        try {
+            $psi2 = New-Object System.Diagnostics.ProcessStartInfo
+            $psi2.FileName               = $sevenZip
+            $psi2.UseShellExecute        = $false
+            $psi2.CreateNoWindow         = $true
+            $psi2.RedirectStandardOutput = $true
+            $psi2.RedirectStandardError  = $true
+            $psi2.Arguments              = "e `"$zipPath`" `"-o$tmpDir`" -p$zipPassword -y"
+            $proc2 = [System.Diagnostics.Process]::Start($psi2)
+            $proc2.WaitForExit()
+        } catch {}
+        $tmpHtml = Join-Path $tmpDir $htmlLeaf
+        if (Test-Path $tmpHtml) { Start-Process $tmpHtml }
+    }
 }
