@@ -11,17 +11,26 @@
 
 Bypasses file locks via VSS Shadow Copy · 16 browsers · AES-256 encrypted output · interactive HTML report
 
-[When to Use](#-when-to-use) · [Quick Start](#-quick-start) · [Parameters](#-parameters) · [Report](#-html-report) · [Limitations](#-limitations)
+[When to Use](#-when-to-use) · [Quick Start](#-quick-start) · [Parameters](#-parameters) · [Report](#-html-report) · [Limitations](#-limitations) · [Roadmap](#-roadmap)
 
 </div>
 
 ---
 
-## What it is
+## Why this tool
 
-A standalone PowerShell script for rapid browser history acquisition during incident response. Runs as a single file, requires no installation, and produces a self-contained interactive HTML report packed into an AES-256 encrypted ZIP.
+There are several browser history tools out there. This one is built specifically for the IR scenario — not for casual browsing analysis.
 
-Designed for the scenario where you are on a live Windows machine, need browser evidence fast, and cannot install tools.
+The differences that matter in the field:
+
+- **VSS Shadow Copy** — reads database files from running browsers without killing the process or waiting for it to close. Most tools require the browser to be closed first.
+- **All users in one run** — enumerates every local profile via the registry, not just the current session. One command covers the whole machine.
+- **Encrypted evidence packaging** — output goes into an AES-256 ZIP with a one-time random password printed to console. Safe to copy over a jump host, email to a colleague, or drop on a USB.
+- **Zero installation** — single `.ps1` file. Works on any Windows machine with PowerShell 5.1, which means every corporate endpoint since Windows 7.
+- **Regex fallback** — if `sqlite3.exe` is not available, the script still extracts URLs from raw database bytes. Degraded output, but output.
+
+**Where it fits in a typical IR workflow:**
+Run this script early — before or alongside a KAPE collection, and before FTK imaging. It handles the browser database layer that standard KAPE targets may miss when files are locked by a running browser. The structured CSV output feeds directly into a SIEM or timeline tool. The encrypted archive is safe to hand off at any point without breaking evidence handling procedures.
 
 ---
 
@@ -144,7 +153,7 @@ The script runs with no external files. Optional tools improve output quality:
 
 Both files are included in the [release archive](https://github.com/zavetsec/ZavetSec-BrowserHistory/releases/latest). Download the release ZIP, extract everything to a folder — the script will find them automatically.
 
-Alternatively, download them from official sources and place next to the script:
+Alternatively, download from official sources:
 - `sqlite3.exe` — [sqlite.org/download.html](https://sqlite.org/download.html) (`sqlite-tools-win-x64-*.zip`)
 - `7z.exe` — [7-zip.org](https://www.7-zip.org/) (copy from any existing 7-Zip installation)
 
@@ -234,6 +243,38 @@ Yes, if running as Administrator. VSS shadow copy bypasses file locks entirely.
 
 **How does this relate to ZavetSec Triage?**
 `Invoke-ZavetSecTriage.ps1` includes browser history as module #14 alongside 17 other collection modules. This script is the standalone version — use it when you need browser evidence only, or when triage output is too broad.
+
+**Does it work alongside KAPE or other IR tools?**
+Yes. Run this script before FTK imaging or alongside a KAPE collection — it handles the browser database layer that KAPE targets may miss when files are locked by a running browser. The encrypted ZIP output is safe to copy off the machine at any point in the IR workflow. The `-CsvExport` flag produces structured output that can be ingested into a SIEM or timeline tool directly.
+
+---
+
+## 🗺️ Roadmap
+
+Planned improvements — roughly in priority order:
+
+- [ ] **Suspicious domain tagging** ← *next* — flag known C2s, phishing domains, paste sites, and cloud exfil targets directly in the report
+- [ ] **IOC export** — one-click export of all domains / URLs as a plain IOC list for TIP / SIEM ingestion
+- [ ] **Tor / anonymizer detection** — highlight visits to .onion proxies, VPN marketing pages, and anonymizer services
+- [ ] **Timeline view** — chronological activity across all users and browsers on a single timeline
+- [ ] **Multi-drive VSS** — extend shadow copy support beyond C:\
+- [ ] **Download history** — collect Chromium download records alongside browsing history
+
+Contributions welcome — see below.
+
+---
+
+## 🤝 Contributing
+
+The most useful contributions right now:
+
+- **New browser paths** — if a browser you use is not detected, open an issue with the path to its `History` or `places.sqlite`
+- **False positive / negative reports** — unexpected behavior on specific Windows versions or domain configurations
+- **Suspicious domain lists** — curated lists of C2, phishing, or exfil domains for the planned tagging feature
+
+When submitting a PR: keep changes PowerShell 5.1 compatible, test on a real Windows machine, and keep the zero-dependency guarantee intact for the core collection path.
+
+Open an issue → [github.com/zavetsec/ZavetSec-BrowserHistory/issues](https://github.com/zavetsec/ZavetSec-BrowserHistory/issues)
 
 ---
 
