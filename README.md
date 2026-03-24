@@ -115,6 +115,9 @@ Get-Help .\ZavetSec-BrowserHistory.ps1 -Full
 ```
 
 > Without arguments the report is saved to `.\Reports\<HOSTNAME>_<TIMESTAMP>.zip`
+> 
+> <img width="923" height="408" alt="image" src="https://github.com/user-attachments/assets/2c8e562b-2271-4a42-b98d-a03a75a268ab" />
+
 
 ---
 
