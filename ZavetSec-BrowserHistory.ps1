@@ -27,19 +27,101 @@
 
 #Requires -Version 5.1
 
+<#
+.SYNOPSIS
+    ZavetSec-BrowserHistory v1.0 - Browser history acquisition for Windows IR.
+
+.DESCRIPTION
+    Extracts browser history from ALL local user profiles on a Windows machine
+    via VSS Shadow Copy (bypasses file locks on running browsers).
+    Produces a self-contained interactive HTML report packed into an AES-256
+    encrypted ZIP archive.
+
+    Supports 16 browsers: Chrome, Edge, Firefox, Brave, Opera, Opera GX,
+    Yandex, Vivaldi, Tor Browser, Thunderbird, Waterfox, LibreWolf,
+    Pale Moon, Epic, Comodo Dragon, OneDrive WebView.
+
+    Optional files (place next to script or in PATH):
+      sqlite3.exe + 7z.exe + 7z.dll
+
+    Remote execution:
+      PsExec:  psexec \\TARGET -s -d powershell.exe -ExecutionPolicy Bypass -File "\\share\ZavetSec-BrowserHistory.ps1" -NoArchive -OutputPath "\\share\out"
+      WinRM:   Invoke-Command -ComputerName TARGET -FilePath .\ZavetSec-BrowserHistory.ps1
+
+.PARAMETER OutputPath
+    Path for the HTML report. Auto-generated in .\Reports\ if omitted.
+
+.PARAMETER MaxRecordsPerBrowser
+    Maximum records to extract per browser profile. Default: 5000.
+    Use 999999 to collect all available records.
+
+.PARAMETER OpenReport
+    Open the HTML report in the default browser after generation.
+    Has no effect when running remotely via PsExec or WinRM.
+
+.PARAMETER CsvExport
+    Save results as CSV alongside the HTML report.
+
+.PARAMETER DateFrom
+    Collect records starting from this date. Format: yyyy-MM-dd.
+
+.PARAMETER DateTo
+    Collect records up to and including this date. Format: yyyy-MM-dd.
+
+.PARAMETER NoArchive
+    Skip ZIP archiving - save HTML (and CSV) as plain files.
+    Use when 7z.exe is not available on the target host.
+
+.PARAMETER Help
+    Show this help message and exit.
+
+.EXAMPLE
+    .\ZavetSec-BrowserHistory.ps1
+    Standard run. Encrypted ZIP + password printed to console.
+
+.EXAMPLE
+    .\ZavetSec-BrowserHistory.ps1 -OpenReport -CsvExport
+    Full local run, open report immediately, also save CSV.
+
+.EXAMPLE
+    .\ZavetSec-BrowserHistory.ps1 -DateFrom 2025-01-01 -DateTo 2025-06-30
+    Collect only records within a date range.
+
+.EXAMPLE
+    .\ZavetSec-BrowserHistory.ps1 -NoArchive -OutputPath "\\server\share\evidence"
+    Save plain HTML to a network share (e.g. from PsExec run as SYSTEM).
+
+.EXAMPLE
+    .\ZavetSec-BrowserHistory.ps1 -MaxRecordsPerBrowser 999999
+    Collect all available records without limit.
+
+.EXAMPLE
+    psexec \\TARGET -s powershell.exe -ExecutionPolicy Bypass -File "\\share\ZavetSec-BrowserHistory.ps1" -NoArchive -OutputPath "\\share\output"
+    Remote collection via PsExec. Runs as SYSTEM, saves directly to network share.
+
+.NOTES
+    Version  : 1.0
+    Requires : PowerShell 5.1+, local Administrator rights
+    Author   : github.com/zavetsec
+#>
+
 [CmdletBinding()]
 param(
     [string]$OutputPath          = "",
     [int]$MaxRecordsPerBrowser   = 5000,
     [switch]$OpenReport,
-    # Optional: also save results as CSV alongside the HTML report
     [switch]$CsvExport,
-    # Optional: filter records by date range (ISO format: 2025-01-01)
     [string]$DateFrom            = "",
     [string]$DateTo              = "",
-    # Optional: skip ZIP archiving, save HTML (and CSV) as plain files
-    [switch]$NoArchive
+    [switch]$NoArchive,
+    [switch]$Help
 )
+
+# Show help and exit if -Help specified
+if ($Help) {
+    Get-Help $MyInvocation.MyCommand.Definition -Detailed
+    exit 0
+}
 
 $ErrorActionPreference = "SilentlyContinue"
 
@@ -56,18 +138,23 @@ if ($DateTo -ne "") {
 }
 Add-Type -AssemblyName System.Web
 
-# --- Resolve script directory ---
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+# --- Resolve script directory (robust for local, PsExec, WinRM, SYSTEM context) ---
+$ScriptDir = $null
+if ($MyInvocation.MyCommand.Definition) {
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+}
+if (-not $ScriptDir -or -not (Test-Path $ScriptDir)) {
+    $ScriptDir = Split-Path -Parent $PSCommandPath
+}
+if (-not $ScriptDir -or -not (Test-Path $ScriptDir)) {
+    $ScriptDir = $PWD.Path
+}
 
-# --- Resolve output path: Reports subfolder next to script ---
+# --- Resolve output path: same folder as script ---
 if ([string]::IsNullOrEmpty($OutputPath)) {
-    $ReportsDir = Join-Path $ScriptDir "Reports"
-    if (-not (Test-Path $ReportsDir)) {
-        New-Item -ItemType Directory -Path $ReportsDir -Force | Out-Null
-    }
     $TimeStamp  = Get-Date -Format "yyyyMMdd_HHmmss"
     $HostTag    = $env:COMPUTERNAME
-    $OutputPath = Join-Path $ReportsDir "${HostTag}_${TimeStamp}.html"
+    $OutputPath = Join-Path $ScriptDir "${HostTag}_${TimeStamp}.html"
 }
 
 # --- Resolve sqlite3.exe: same folder as script OR PATH ---
@@ -84,13 +171,26 @@ foreach ($c in $candidates) {
 }
 
 Write-Host ""
-Write-Host "  [*] Browser History Extractor  [ALL USERS]" -ForegroundColor Cyan
-Write-Host "  [*] Script dir : $ScriptDir"                -ForegroundColor DarkGray
+Write-Host "  +------------------------------------------------------------------+" -ForegroundColor DarkCyan
+Write-Host "  |                                                                  |" -ForegroundColor DarkCyan
+Write-Host "  |   ____                    __  ____                              |" -ForegroundColor Cyan
+Write-Host "  |  /__  /  ____ __   _____ / /_/ ___/___  ____                   |" -ForegroundColor Cyan
+Write-Host "  |    / /  / __  / | / / _ \ __/\__ \/ _ \/ ___/                  |" -ForegroundColor Cyan
+Write-Host "  |   / /__/ /_/ /| |/ /  __/ /_ ___/ /  __/ /__                   |" -ForegroundColor Cyan
+Write-Host "  |  /____/\__,_/ |___/\___/\__//____/\___/\___/                   |" -ForegroundColor Cyan
+Write-Host "  |                                                                  |" -ForegroundColor DarkCyan
+Write-Host "  |   BrowserHistory v1.0  //  Browser Forensic Acquisition Tool   |" -ForegroundColor White
+Write-Host "  |   github.com/zavetsec                                           |" -ForegroundColor DarkGray
+Write-Host "  |                                                                  |" -ForegroundColor DarkCyan
+Write-Host "  +------------------------------------------------------------------+" -ForegroundColor DarkCyan
+Write-Host ""
+Write-Host "  [*] Host       : $env:COMPUTERNAME" -ForegroundColor DarkGray
+Write-Host "  [*] User       : $env:USERNAME" -ForegroundColor DarkGray
+Write-Host "  [*] Script dir : $ScriptDir" -ForegroundColor DarkGray
 if ($Sqlite3) {
-    Write-Host "  [+] sqlite3.exe : $Sqlite3" -ForegroundColor Green
+    Write-Host "  [+] sqlite3    : $Sqlite3" -ForegroundColor Green
 } else {
-    Write-Host "  [!] sqlite3.exe : NOT FOUND - falling back to regex extraction" -ForegroundColor Yellow
-    Write-Host "      Place sqlite3.exe in: $ScriptDir"   -ForegroundColor DarkGray
+    Write-Host "  [!] sqlite3    : not found - regex fallback (URL only, no titles)" -ForegroundColor Yellow
 }
 Write-Host ""
 
@@ -242,7 +342,10 @@ function Get-ChromiumHistory {
                 if ($p.Count -lt 2) { continue }
                 $ts = if ($p.Count -ge 4 -and $p[3]) { try { [int64]$p[3] } catch { 0 } } else { 0 }
                 $dt = if ($ts -gt 0) {
-                    try { [datetime]::FromFileTimeUtc(($ts - 11644473600000000) * 10) } catch { [datetime]::MinValue }
+                    # Chromium stores microseconds since 1601-01-01 (Windows FILETIME epoch)
+                    # FromFileTimeUtc expects 100-nanosecond intervals since 1601-01-01
+                    # so just multiply by 10 to convert microseconds -> 100ns ticks
+                    try { [datetime]::FromFileTimeUtc($ts * 10) } catch { [datetime]::MinValue }
                 } else { [datetime]::MinValue }
                 $records += [PSCustomObject]@{
                     UserName  = $UserName
@@ -595,7 +698,7 @@ $html = @"
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%2307090e'/><circle cx='16' cy='16' r='11' fill='none' stroke='%2300d4ff' stroke-width='2'/><line x1='16' y1='5' x2='16' y2='27' stroke='%2300d4ff' stroke-width='1.5'/><line x1='5' y1='16' x2='27' y2='16' stroke='%2300d4ff' stroke-width='1.5'/><ellipse cx='16' cy='16' rx='5.5' ry='11' fill='none' stroke='%230090ff' stroke-width='1.5'/></svg>"/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet"/>
 <style>
-:root{--bg:#07090e;--bg2:#0c1018;--bg3:#101520;--bg4:#141b24;--bd:#1a2a3a;--bd2:#203040;--ac:#00d4ff;--ac2:#0090ff;--ac3:#ff3060;--gr:#00ff88;--yw:#ffd700;--tx:#c0d0e0;--mt:#405060;--mt2:#253545;--pu:#9966ff}
+:root{--bg:#07090e;--bg2:#0c1018;--bg3:#101520;--bg4:#141b24;--bd:#1a2a3a;--bd2:#203040;--ac:#00d4ff;--ac2:#0090ff;--ac3:#ff3060;--gr:#00ff88;--yw:#ffd700;--tx:#c0d0e0;--mt:#7a9ab0;--mt2:#253545;--pu:#9966ff}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.5;min-height:100vh}
 body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.08) 3px,rgba(0,0,0,.08) 4px);pointer-events:none;z-index:9998}
@@ -607,15 +710,15 @@ body::after{content:'';position:fixed;inset:0;background-image:linear-gradient(r
 .logo-line{display:flex;align-items:center;gap:10px}
 .lb{color:var(--ac);font-family:'Rajdhani',sans-serif;font-size:30px;font-weight:700}
 .lt{font-family:'Rajdhani',sans-serif;font-size:28px;font-weight:700;letter-spacing:5px;text-transform:uppercase;background:linear-gradient(130deg,#fff 0%,var(--ac) 60%,var(--ac2) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.ls{font-size:10px;color:var(--mt);letter-spacing:3px;text-transform:uppercase;margin-top:6px}
+.ls{font-size:10px;color:#7a9ab0;letter-spacing:3px;text-transform:uppercase;margin-top:6px}
 .hdr-meta{display:flex;flex-direction:column;gap:5px;align-items:flex-end}
-.mi{font-size:11px;color:var(--mt);letter-spacing:1px}
+.mi{font-size:11px;color:#8aafc0;letter-spacing:1px}
 .mi span{color:var(--ac)}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:32px}
 .card{background:var(--bg2);border:1px solid var(--bd);border-radius:4px;padding:18px 20px;position:relative;overflow:hidden;transition:border-color .2s,transform .2s}
 .card:hover{border-color:var(--ac);transform:translateY(-2px)}
 .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--ac2),var(--ac))}
-.cl{font-size:9px;color:var(--mt);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+.cl{font-size:9px;color:#8aafc0;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
 .cv{font-family:'Rajdhani',sans-serif;font-size:36px;font-weight:700;color:#fff;line-height:1}
 .cv.a{color:var(--ac)}.cv.g{color:var(--gr)}.cv.y{color:var(--yw)}.cv.p{color:var(--pu)}.cv.r{color:var(--ac3)}
 .panels{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:32px}
@@ -629,7 +732,7 @@ body::after{content:'';position:fixed;inset:0;background-image:linear-gradient(r
 .sbw{flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden}
 .sb{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--ac2),var(--ac))}
 .us{background:linear-gradient(90deg,#5522bb,#9966ff)!important}
-.sc{font-size:11px;color:var(--mt);width:46px;text-align:right;flex-shrink:0}
+.sc{font-size:11px;color:#a0bfd0;width:46px;text-align:right;flex-shrink:0}
 .dn{font-size:10px}.db{background:linear-gradient(90deg,var(--ac3),#ff7040)!important}
 .b-chromium{background:linear-gradient(90deg,#1a52a8,#6ba3ff)!important}
 .b-googlechrome{background:linear-gradient(90deg,#1050aa,#4285f4)!important}
@@ -646,7 +749,7 @@ body::after{content:'';position:fixed;inset:0;background-image:linear-gradient(r
 .b-thunderbird{background:linear-gradient(90deg,#003880,#0a84ff)!important}
 .b-onedrivewebview,.b-winwebexperience{background:linear-gradient(90deg,#004060,#0078d4)!important}
 .tb{background:var(--bg2);border:1px solid var(--bd);border-radius:4px;padding:12px 18px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-.tbl{font-size:9px;color:var(--mt);letter-spacing:2px;text-transform:uppercase}
+.tbl{font-size:9px;color:#8aafc0;letter-spacing:2px;text-transform:uppercase}
 .sw{position:relative;flex:1;min-width:200px}
 #si{width:100%;background:var(--bg3);border:1px solid var(--bd2);border-radius:3px;padding:7px 12px;color:var(--tx);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;transition:border-color .2s}
 #si:focus{border-color:var(--ac)}
@@ -680,7 +783,7 @@ tbody tr{border-bottom:1px solid var(--bd);transition:background .1s}
 tbody tr:hover{background:rgba(0,212,255,.03)}
 tbody tr.hidden{display:none}
 td{padding:8px 13px;vertical-align:middle}
-.idx{color:var(--mt);font-size:10px;width:46px}
+.idx{color:#6a8898;font-size:10px;width:46px}
 .uc{max-width:120px}
 .ub{display:inline-block;padding:2px 7px;border-radius:3px;font-size:9px;font-weight:600;letter-spacing:.5px;color:#fff;white-space:nowrap;background:linear-gradient(90deg,#4422aa,#9966ff)}
 .bb{display:inline-block;padding:2px 7px;border-radius:3px;font-size:9px;font-weight:600;letter-spacing:.5px;color:#fff;white-space:nowrap;background:var(--mt2)}
@@ -688,11 +791,11 @@ td{padding:8px 13px;vertical-align:middle}
 .tc{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tc a{color:var(--tx);text-decoration:none;transition:color .15s}.tc a:hover{color:var(--ac)}
 .vc{text-align:center;color:var(--gr);font-size:12px}
-.dtc{color:var(--mt);font-size:11px;white-space:nowrap}
+.dtc{color:#8aafc0;font-size:11px;white-space:nowrap}
 .ftr{margin-top:36px;padding-top:18px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
-.ft{font-size:10px;color:var(--mt);letter-spacing:1px}.fa{color:var(--ac)}
-.fgl{color:var(--mt);text-decoration:none;transition:color .2s}.fgl:hover{color:var(--ac)}
-.nr{text-align:center;padding:36px;color:var(--mt);font-size:12px;display:none}
+.ft{font-size:10px;color:#7a9ab0;letter-spacing:1px}.fa{color:var(--ac)}
+.fgl{color:#7a9ab0;text-decoration:none;transition:color .2s}.fgl:hover{color:var(--ac)}
+.nr{text-align:center;padding:36px;color:#7a9ab0;font-size:12px;display:none}
 .nr.v{display:block}
 </style>
 </head>
@@ -897,7 +1000,7 @@ if ($NoArchive) {
         $filesToPack += [System.IO.Path]::ChangeExtension($OutputPath, ".csv")
     }
 
-    # Locate 7-Zip — always resolve to full absolute path to avoid PS execution warnings
+    # Locate 7-Zip - always resolve to full absolute path to avoid PS execution warnings
     $sevenZipCandidates = @(
         (Join-Path $ScriptDir "7z.exe"),
         (Join-Path $ScriptDir "7-zip\7z.exe"),
@@ -913,7 +1016,7 @@ if ($NoArchive) {
     }
 
     if ($sevenZip) {
-        # AES-256 encrypted ZIP via direct ProcessStartInfo — bypasses all PS/cmd escaping
+        # AES-256 encrypted ZIP via direct ProcessStartInfo - bypasses all PS/cmd escaping
         try {
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName               = $sevenZip
@@ -992,18 +1095,21 @@ if ($NoArchive) {
     }
     Write-Host ""
     Write-Host "   Mode     : plain files (no archive, no password)" -ForegroundColor Yellow
-} elseif ($zipOk) {
+} elseif ($zipOk -and $sevenZip) {
+    # AES-256 encrypted - show password
+    Write-Host "   Archive  : $zipPath" -ForegroundColor White
+    Write-Host "   Encrypt  : AES-256" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "   Password : " -ForegroundColor DarkGray -NoNewline
+    Write-Host $zipPassword -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "   Save this password - it will not be shown again." -ForegroundColor DarkGray
+} elseif ($zipOk -and -not $sevenZip) {
+    # ZIP created but without encryption - no password to show
     Write-Host "   Archive  : $zipPath" -ForegroundColor White
     Write-Host ""
-    if ($sevenZip) {
-        Write-Host "   Password : " -ForegroundColor DarkGray -NoNewline
-        Write-Host $zipPassword -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "   Save this password - it will not be shown again." -ForegroundColor DarkGray
-    } else {
-        Write-Host "   Password : [not set - 7-Zip unavailable]" -ForegroundColor Yellow
-        Write-Host "   Protect the ZIP manually if transferring over untrusted channels." -ForegroundColor DarkGray
-    }
+    Write-Host "   [!] Archive created WITHOUT encryption (7z.exe + 7z.dll not found)." -ForegroundColor Yellow
+    Write-Host "   Protect the file manually before transferring." -ForegroundColor DarkGray
 } else {
     Write-Host "   Report   : $OutputPath" -ForegroundColor White
     Write-Host ""
@@ -1015,7 +1121,11 @@ Write-Host "  ================================================================" 
 Write-Host ""
 
 if ($OpenReport) {
-    if ($NoArchive -or (-not $zipOk)) {
+    # Check if we have an interactive desktop session (not PsExec SYSTEM / WinRM)
+    $isInteractive = [Environment]::UserInteractive -and $env:SESSIONNAME -ne $null
+    if (-not $isInteractive) {
+        Write-Host "  [!] -OpenReport skipped: no interactive desktop session (PsExec/WinRM)" -ForegroundColor DarkGray
+    } elseif ($NoArchive -or (-not $zipOk)) {
         Start-Process $OutputPath
     } elseif ($zipOk -and $sevenZip) {
         $tmpDir  = Join-Path $env:TEMP ("BHE_View_" + [System.IO.Path]::GetRandomFileName())
