@@ -2,7 +2,7 @@
 
 # `>_` ZavetSec-BrowserHistory
 
-**Browser history acquisition for Windows IR — all users, all browsers, one encrypted report**
+**Live browser history acquisition for Windows IR — all users, all browsers, one encrypted report**
 
 [![PowerShell 5.1+](https://img.shields.io/badge/PowerShell-5.1%2B-blue?logo=powershell&logoColor=white)](https://github.com/zavetsec)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078d4?logo=windows&logoColor=white)](https://github.com/zavetsec)
@@ -31,6 +31,12 @@ One-command browser history acquisition for live IR on Windows:
 - Zero installation — single `.ps1` file, PowerShell 5.1, any Windows endpoint
 
 > 🚧 **Upcoming:** inline suspicious domain tagging — C2s, phishing domains, paste sites, and cloud exfil targets flagged directly in the report
+
+---
+
+## Audience
+
+DFIR analysts · Incident responders · SOC engineers · Threat hunters
 
 ---
 
@@ -233,7 +239,7 @@ sqlite3.exe present?
 
 | Engine | Browsers |
 |---|---|
-| **Chromium** | Google Chrome, Microsoft Edge, Brave, Yandex Browser, Opera, Opera GX, Vivaldi, Epic Privacy Browser, Comodo Dragon, OneDrive WebView, Win WebExperience |
+| **Chromium** | Google Chrome, Microsoft Edge, Brave, Yandex Browser, Opera, Opera GX, Vivaldi, Epic Privacy Browser, Comodo Dragon, OneDrive WebView (enterprise sync workflows), Win WebExperience |
 | **Firefox / Gecko** | Mozilla Firefox, Tor Browser, Thunderbird, Waterfox, LibreWolf, Pale Moon |
 
 ---
