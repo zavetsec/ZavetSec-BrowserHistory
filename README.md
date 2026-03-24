@@ -165,7 +165,7 @@ Generated fresh on every run via `System.Security.Cryptography.RandomNumberGener
    REPORT READY
   ================================================================
 
-   Archive  : .\Reports\HOSTNAME_20260324_093100.zip
+   Archive  : .\HOSTNAME_20260324_093100.zip
    Encrypt  : AES-256
 
    Password : TJewuHDDC9phPTYN
@@ -200,7 +200,7 @@ ZavetSec-BrowserHistory.ps1
 sqlite3.exe        ← included in release archive
 7z.exe             ← included in release archive
 7z.dll             ← included in release archive (required — 7z.exe will not work without it)
-Reports\           ← created automatically
+HOSTNAME_TIMESTAMP.zip  ← report saved here
 ```
 
 ---
@@ -269,16 +269,16 @@ Invoke-Command -ComputerName TARGET -FilePath .\ZavetSec-BrowserHistory.ps1 -Arg
 
 **Default (with archiving):**
 ```
-.\Reports\
-└── HOSTNAME_20260324_093100.zip    ← AES-256 encrypted
+ZavetSec-BrowserHistory.ps1
+HOSTNAME_20260324_093100.zip    ← AES-256 encrypted, saved next to the script
 ```
 Source `.html` and `.csv` are deleted after successful archiving.
 
 **With `-NoArchive`:**
 ```
-.\Reports\
-├── HOSTNAME_20260324_093100.html
-└── HOSTNAME_20260324_093100.csv    ← with -CsvExport
+ZavetSec-BrowserHistory.ps1
+HOSTNAME_20260324_093100.html
+HOSTNAME_20260324_093100.csv    ← with -CsvExport
 ```
 
 **CSV columns:** `UserName, Browser, Domain, Title, URL, Visits, LastVisit`
