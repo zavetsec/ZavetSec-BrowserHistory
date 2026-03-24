@@ -248,20 +248,43 @@ sqlite3.exe present?
 
 The script is designed to run safely in non-interactive contexts.
 
-**PsExec (as SYSTEM):**
+**Step 1 — Deploy the script folder to the remote host:**
+```cmd
+xcopy "C:\tools\ZavetSec-BrowserHistory" "\\TARGET\C$\Windows\Temp\ZavetSec-BrowserHistory\" /E /I /Y
+```
+This copies the entire folder including `sqlite3.exe`, `7z.exe`, and `7z.dll` in one step. Use `C$` admin share or any accessible share on the target.
+
+**Step 2 — Execute remotely:**
+
+PsExec (as SYSTEM):
 ```powershell
-psexec \\TARGET -s powershell.exe -ExecutionPolicy Bypass -File "\\share\ZavetSec-BrowserHistory.ps1" -NoArchive -OutputPath "\\share\output\TARGET_history.html"
+psexec \\TARGET -s powershell.exe -ExecutionPolicy Bypass `
+    -File "C:\Windows\Temp\ZavetSec-BrowserHistory\ZavetSec-BrowserHistory.ps1" `
+    -NoArchive -OutputPath "\\share\IR\TARGET.html"
 ```
 
-**WinRM / Invoke-Command:**
+WinRM / Invoke-Command:
 ```powershell
-Invoke-Command -ComputerName TARGET -FilePath .\ZavetSec-BrowserHistory.ps1 -ArgumentList @{NoArchive=$true; OutputPath="\\share\output\TARGET_history.html"}
+Invoke-Command -ComputerName TARGET -FilePath .\ZavetSec-BrowserHistory.ps1
+```
+
+**Full remote workflow (xcopy → run → collect → cleanup):**
+```cmd
+rem 1. Deploy tool folder to target (includes sqlite3.exe, 7z.exe, 7z.dll)
+xcopy "C:\tools\ZavetSec-BrowserHistory" "\\TARGET\C$\Windows\Temp\ZavetSec-BrowserHistory\" /E /I /Y
+
+rem 2. Run and save output to a network share
+psexec \\TARGET -s powershell.exe -ExecutionPolicy Bypass -File "C:\Windows\Temp\ZavetSec-BrowserHistory\ZavetSec-BrowserHistory.ps1" -NoArchive -OutputPath "\\share\IR\TARGET.html"
+
+rem 3. Clean up — remove the tool folder from target
+psexec \\TARGET cmd /c "rmdir /S /Q C:\Windows\Temp\ZavetSec-BrowserHistory"
 ```
 
 **Remote execution notes:**
 - `-OpenReport` is automatically suppressed when no interactive desktop is detected (PsExec SYSTEM, WinRM) — no error, just a logged skip
 - `$ScriptDir` resolves correctly in all contexts: local, PsExec, WinRM, scheduled task
-- For remote runs, use `-NoArchive` with a UNC `OutputPath`, or collect the ZIP and password separately
+- xcopy with `/E /I /Y` copies subdirectories, creates the destination if missing, and suppresses prompts — safe for scripted IR workflows
+- For encrypted output over the network, omit `-NoArchive` and retrieve the `.zip` + password from the target separately
 
 ---
 
